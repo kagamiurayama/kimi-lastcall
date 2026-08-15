@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>kimi-lastcall</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">RELAY CONTROL</p>
+        <h1>kimi-lastcall</h1>
+        <p class="subtitle" data-i18n="subtitle">亲笔交接，人工确认，验证后换窗。</p>
+      </div>
+      <button id="language" class="quiet" type="button">EN</button>
+    </header>
+
+    <section id="banner" class="banner muted" aria-live="polite">正在读取本地状态…</section>
+
+    <section class="grid">
+      <article class="card status-card">
+        <div class="card-title">
+          <h2 data-i18n="session">当前会话</h2>
+          <span id="readyBadge" class="badge">—</span>
+        </div>
+        <dl class="facts">
+          <div><dt data-i18n="sessionId">会话指纹</dt><dd id="sessionDigest">—</dd></div>
+          <div><dt data-i18n="model">模型</dt><dd id="model">—</dd></div>
+          <div><dt data-i18n="tmux">受管终端</dt><dd id="tmux">—</dd></div>
+          <div><dt data-i18n="handoff">交接文件</dt><dd id="handoff">—</dd></div>
+        </dl>
+        <div class="meter"><span id="usageBar"></span></div>
+        <p id="usageText" class="metric">—</p>
+      </article>
+
+      <article class="card settings-card">
+        <div class="card-title"><h2 data-i18n="threshold">落笔阈值</h2><span id="thresholdValue">—</span></div>
+        <input id="threshold" type="range" min="50000" max="250000" step="50000" value="200000">
+        <div class="range-labels"><span>50k</span><span id="thresholdMax">250k</span></div>
+        <p id="headroom" class="hint"></p>
+        <p id="thresholdWarning" class="warning"></p>
+        <button id="saveThreshold" type="button" data-i18n="save">保存阈值</button>
+      </article>
+    </section>
+
+    <section class="card switch-card">
+      <div class="card-title">
+        <div><p class="eyebrow">HUMAN GATE</p><h2 data-i18n="switchTitle">开始新窗口</h2></div>
+      </div>
+      <p data-i18n="switchCopy">这里只发送一次固定的 /new。它不会替你写交接信，也不会在阈值到达时自动换窗。</p>
+      <ol id="blockers" class="blockers"></ol>
+      <div class="actions">
+        <button id="preview" class="secondary" type="button" data-i18n="preview">预览</button>
+        <button id="execute" type="button" disabled data-i18n="execute">确认并换窗</button>
+      </div>
+      <div id="confirmPanel" class="confirm-panel" hidden>
+        <label for="confirmation" data-i18n="confirmLabel">请输入下方确认短语</label>
+        <code id="phrase"></code>
+        <input id="confirmation" autocomplete="off" spellcheck="false">
+      </div>
+    </section>
+
+    <footer><span data-i18n="localOnly">仅监听本机回环地址；页面不会上传会话或交接正文。</span></footer>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>
