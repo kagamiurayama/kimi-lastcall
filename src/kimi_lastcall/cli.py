@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import __version__, binding, gate, secure, state
+from . import __version__, binding, compat, gate, secure, state
 from .config import (
     ControllerConfigError,
     build_config,
@@ -232,6 +232,8 @@ def cmd_status(args: argparse.Namespace) -> int:
             print("session bound: %s" % ("yes" if controller_status["current_session"] else "no"))
             print("ready to switch: %s" % ("yes" if controller_status["ready_to_switch"] else "no"))
             print("switch mode: %s" % controller_status["switch_mode"])
+            for warning in controller_status["compatibility_warnings"]:
+                print("compatibility warning: %s" % warning)
             if controller_status["blockers"]:
                 print("blockers: %s" % ", ".join(controller_status["blockers"]))
         else:
@@ -295,6 +297,8 @@ def cmd_configure(args: argparse.Namespace) -> int:
     print("managed cwd: %s" % value.managed_cwd)
     print("tmux: %s / %s" % (value.tmux_socket, value.tmux_session))
     print("switch mode: %s" % value.switch_mode)
+    for warning in compat.automatic_mode_warnings(value.switch_mode):
+        print("compatibility warning: %s" % warning)
     print("next: kimi-lastcall serve")
     return 0
 
@@ -307,6 +311,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         token = ensure_control_token()
         from . import web
 
+        for warning in compat.automatic_mode_warnings(config.switch_mode):
+            print("kimi-lastcall: compatibility warning: %s" % warning, file=sys.stderr)
         print("kimi-lastcall control panel: http://%s:%d/?token=%s" % (config.host, config.port, token))
         print("loopback only; press Ctrl-C to stop")
         web.serve(config)
@@ -371,6 +377,8 @@ def cmd_set_mode(args: argparse.Namespace) -> int:
         print("kimi-lastcall: mode change rejected: %s" % exc, file=sys.stderr)
         return 1
     print("kimi-lastcall: switch mode set to %s" % validated.switch_mode)
+    for warning in compat.automatic_mode_warnings(validated.switch_mode):
+        print("compatibility warning: %s" % warning)
     print("restart `kimi-lastcall serve` for the running controller to load this mode")
     return 0
 

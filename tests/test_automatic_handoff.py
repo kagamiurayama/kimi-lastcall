@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from kimi_lastcall import automation, binding, cli, config, controller, gate, secure, state
+from kimi_lastcall import automation, binding, cli, compat, config, controller, gate, secure, state
 from kimi_lastcall.tmux_driver import TmuxDriverError
 
 
@@ -129,6 +129,42 @@ def test_v1_config_remains_manual_and_v2_mode_is_strict(tmp_path):
             tmux_bin=cfg.tmux_bin,
             switch_mode="surprise",
         )
+
+
+def test_cache_expiry_hint_preflight_is_conservative(monkeypatch, tmp_path):
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    path = home / "tui.toml"
+
+    assert compat.tui_config_path() == path
+    assert compat.cache_expiry_hint_disabled() is False
+    path.write_text("cache_expiry_hint = true\n", encoding="utf-8")
+    assert compat.cache_expiry_hint_disabled() is False
+    path.write_text("cache_expiry_hint = FALSE\n", encoding="utf-8")
+    assert compat.cache_expiry_hint_disabled() is False
+    path.write_text("cache_expiry_hint = false # unattended seat\n", encoding="utf-8")
+    assert compat.cache_expiry_hint_disabled() is True
+    path.write_text("[notifications]\ncache_expiry_hint = false\n", encoding="utf-8")
+    assert compat.cache_expiry_hint_disabled() is False
+    path.write_text("cache_expiry_hint = false\ncache_expiry_hint = false\n", encoding="utf-8")
+    assert compat.cache_expiry_hint_disabled() is False
+
+
+def test_automatic_status_warns_when_cache_dialog_can_intercept_input(monkeypatch, tmp_path):
+    kimi_home = tmp_path / "kimi-home"
+    kimi_home.mkdir()
+    monkeypatch.setenv("KIMI_CODE_HOME", str(kimi_home))
+    cfg = make_config(tmp_path)
+    prepare_bound(monkeypatch, tmp_path, cfg)
+    ctl = controller.Controller(cfg, driver=FakeDriver(cfg))
+
+    assert ctl.status()["compatibility_warnings"] == [compat.CACHE_EXPIRY_WARNING]
+    (kimi_home / "tui.toml").write_text("cache_expiry_hint = false\n", encoding="utf-8")
+    assert ctl.status()["compatibility_warnings"] == []
+    ctl.config = replace(cfg, switch_mode="manual")
+    (kimi_home / "tui.toml").write_text("cache_expiry_hint = true\n", encoding="utf-8")
+    assert ctl.status()["compatibility_warnings"] == []
 
 
 def test_auto_signal_is_seat_bound_current_ready_and_idempotent(monkeypatch, tmp_path):

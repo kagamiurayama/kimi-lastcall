@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from . import binding, gate, secure, state
+from . import binding, compat, gate, secure, state
 from .adoption import PENDING_SCHEMA
 from .config import ControllerConfig, load_config
 from .tmux_driver import TmuxDriver, TmuxDriverError
@@ -193,6 +193,7 @@ class Controller:
             "last_receipt": receipt,
             "switch_mode": self.config.switch_mode,
             "automatic_switch_enabled": self.config.switch_mode == "automatic",
+            "compatibility_warnings": compat.automatic_mode_warnings(self.config.switch_mode),
             "auto_handoff": self._public_auto_request(auto_request),
             "ready_to_switch": not blockers,
             "blockers": blockers,

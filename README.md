@@ -77,6 +77,14 @@ kimi-lastcall configure \
 
 The cwd must already exist and belong to the current user. `--switch-mode automatic` is explicit; omit it (or use `manual`) to keep human confirmation as the only switch trigger. Configuration is stored under `~/.local/state/kimi-lastcall/` with a 0700 directory and 0600 authority files. The controller listens only on `127.0.0.1`.
 
+For an unattended automatic seat, set the following top-level preference in Kimi Code's `tui.toml` (normally `~/.kimi-code/tui.toml`):
+
+```toml
+cache_expiry_hint = false
+```
+
+This disables only Kimi's idle cache-cost dialog, which otherwise intercepts the next submitted message until someone chooses an option. It does not disable context compaction. `kimi-lastcall` checks this preference in automatic mode and reports a compatibility warning when it cannot prove the dialog is disabled; it never rewrites Kimi's global UI settings.
+
 ### 3. Start the controller
 
 ```sh

@@ -45,6 +45,7 @@ const messages = {
     switch_confirmation_invalid: "确认短语不匹配",
     switch_not_ready: "当前还不满足换窗条件",
     failed_closed_terminal_send: "受管终端拒绝了 /new；未改变会话绑定",
+    kimi_cache_expiry_hint_may_block_input: "Kimi 的缓存过期弹窗可能阻塞无人值守输入；请在 tui.toml 设置 cache_expiry_hint = false",
     authentication_required: "本地登录已失效，请重新打开启动时打印的 URL"
   },
   en: {
@@ -60,6 +61,7 @@ const messages = {
     switch_confirmation_invalid: "The confirmation phrase does not match",
     switch_not_ready: "The switch prerequisites are not complete",
     failed_closed_terminal_send: "The managed terminal rejected /new; binding was not changed",
+    kimi_cache_expiry_hint_may_block_input: "Kimi's cache-expiry dialog may block unattended input; set cache_expiry_hint = false in tui.toml",
     authentication_required: "Local login expired; reopen the URL printed at startup"
   }
 };
@@ -107,7 +109,8 @@ function render(status) {
   slider.value = Math.min(status.usage.trigger_tokens, status.usage.slider_max);
   $("thresholdMax").textContent = `${Math.round(status.usage.slider_max / 1000)}k`;
   updateThresholdLabel();
-  $("thresholdWarning").textContent = status.usage.trigger_warning ? humanize(status.usage.trigger_warning) : "";
+  const warnings = [status.usage.trigger_warning, ...(status.compatibility_warnings || [])].filter(Boolean);
+  $("thresholdWarning").textContent = warnings.map(humanize).join(" · ");
   $("blockers").innerHTML = status.blockers.map((item) => `<li>${escapeHtml(humanize(item))}</li>`).join("");
   $("execute").disabled = !phrase || !ready || $("confirmation").value.trim() !== phrase;
 }

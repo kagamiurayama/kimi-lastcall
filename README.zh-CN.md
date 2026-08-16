@@ -77,6 +77,14 @@ kimi-lastcall configure \
 
 cwd 必须已存在且属于当前用户。`--switch-mode automatic` 必须显式选择；省略它（或写 `manual`）则只允许人类确认后换窗。配置写入 `~/.local/state/kimi-lastcall/`：目录权限精确为 0700，权威文件为 0600。控制器只监听 `127.0.0.1`。
 
+无人值守的自动座位还应在 Kimi Code 的 `tui.toml`（通常为 `~/.kimi-code/tui.toml`）加入顶层设置：
+
+```toml
+cache_expiry_hint = false
+```
+
+它只关闭 Kimi 的“缓存过期、下一条消息将重新发送完整历史”弹窗；该弹窗会截住下一条输入，直到有人作出选择。它不会关闭上下文压缩。automatic 模式下，`kimi-lastcall` 会只读检查这一设置；无法证明弹窗已关闭时会明确报警，但绝不会替用户静默改写 Kimi 的全局 UI 配置。
+
 ### 3. 启动控制器
 
 ```sh

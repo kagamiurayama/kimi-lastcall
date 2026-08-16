@@ -646,6 +646,8 @@ def test_packaged_web_panel_is_bilingual_and_has_no_inline_script():
     assert "Confirm and switch" in script
     assert '<script src="/app.js" defer></script>' in html
     assert "<script>" not in html
+    assert "kimi_cache_expiry_hint_may_block_input" in script
+    assert "compatibility_warnings" in script
 
 
 def fake_tmux_program(path: Path) -> Path:
