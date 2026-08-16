@@ -176,6 +176,20 @@ class ControlRequestHandler(BaseHTTPRequestHandler):
                 if mode != "bearer":
                     raise ControllerError("adoption_requires_bearer")
                 result = self.server.controller.adopt(body)
+            elif parsed.path == "/api/v1/auto-handoff":
+                if mode != "bearer":
+                    raise ControllerError("auto_handoff_requires_bearer")
+                result = self.server.controller.queue_auto_handoff(body)
+                self._json(202, {"ok": True, "result": result})
+                self.wfile.flush()
+                # The hook has received the accepted response before this
+                # worker exists. This prevents /new from re-entering the Stop
+                # request that queued it.
+                self.server.controller.start_auto_handoff_worker(
+                    str(result.get("request_id") or ""),
+                    str(body.get("session_id") or ""),
+                )
+                return
             else:
                 self._json(404, {"ok": False, "error": "not_found"})
                 return
@@ -189,11 +203,13 @@ def make_server(config: ControllerConfig, *, controller: Optional[Controller] = 
     token = ensure_control_token()
     active_controller = controller or Controller(config)
     active_controller.reconcile_pending()
-    return ControlHTTPServer(
+    server = ControlHTTPServer(
         (config.host, config.port),
         active_controller,
         token,
     )
+    active_controller.resume_auto_handoff()
+    return server
 
 
 def serve(config: ControllerConfig) -> None:

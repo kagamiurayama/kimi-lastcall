@@ -9,7 +9,10 @@ import os
 from pathlib import Path
 import socket
 import stat
+import subprocess
+import sys
 import threading
+import time
 from urllib import error, request
 
 import pytest
@@ -36,7 +39,7 @@ def executable(path: Path, body: str = "#!/bin/sh\nexit 0\n") -> Path:
     return path
 
 
-def make_config(tmp_path: Path, tmux_bin: Path, *, port: int = 8765, callback=None):
+def make_config(tmp_path: Path, tmux_bin: Path, *, port: int = 8765, callback=None, mode="manual"):
     cwd = tmp_path / "resident"
     cwd.mkdir(exist_ok=True)
     return config.build_config(
@@ -49,6 +52,7 @@ def make_config(tmp_path: Path, tmux_bin: Path, *, port: int = 8765, callback=No
         port=port,
         switch_timeout_seconds=3,
         artifact_timeout_seconds=2,
+        switch_mode=mode,
     )
 
 
@@ -552,6 +556,29 @@ def test_http_requires_authentication_and_sets_cookie(monkeypatch, tmp_path):
         assert jar
         with opener.open(base + "/api/v1/status", timeout=3) as status_response:
             assert json.loads(status_response.read())["ok"] is True
+        automatic = {
+            "schema": "kimi_lastcall.auto_handoff_signal.v1",
+            "event": "Stop",
+            "source": "relay_gate",
+            "session_id": OLD,
+            "cwd": str(cfg.managed_cwd),
+            "tmux_socket": cfg.tmux_socket,
+            "tmux_session": cfg.tmux_session,
+            "tmux_pane": "%7",
+        }
+        with pytest.raises(error.HTTPError) as unauthenticated:
+            http_json(base + "/api/v1/auto-handoff", body=automatic)
+        assert unauthenticated.value.code == 401
+        cookie_request = request.Request(
+            base + "/api/v1/auto-handoff",
+            data=json.dumps(automatic).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": base},
+        )
+        with pytest.raises(error.HTTPError) as cookie_only:
+            opener.open(cookie_request, timeout=3)
+        assert cookie_only.value.code == 409
+        assert json.loads(cookie_only.value.read())["error"] == "auto_handoff_requires_bearer"
         hostile = request.Request(
             base + "/api/v1/settings",
             data=json.dumps({"trigger_tokens": 200_000}).encode("utf-8"),
@@ -619,6 +646,8 @@ def test_packaged_web_panel_is_bilingual_and_has_no_inline_script():
     assert "Confirm and switch" in script
     assert '<script src="/app.js" defer></script>' in html
     assert "<script>" not in html
+    assert "kimi_cache_expiry_hint_may_block_input" in script
+    assert "compatibility_warnings" in script
 
 
 def fake_tmux_program(path: Path) -> Path:
@@ -692,6 +721,61 @@ def test_fake_tmux_http_sessionstart_end_to_end(monkeypatch, tmp_path):
         assert receipt["completed"] is True
         assert hook_rc.read_text(encoding="utf-8") == "0"
         assert OLD not in json.dumps(receipt)
+        sends = [json.loads(row) for row in log.read_text(encoding="utf-8").splitlines()]
+        assert [row[-1] for row in sends] == ["C-u", "/new", "Enter"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_stop_hook_http_automatic_switch_end_to_end(monkeypatch, tmp_path):
+    private_root(monkeypatch, tmp_path)
+    port = free_port()
+    tmux = fake_tmux_program(tmp_path / "fake-tmux-auto")
+    cfg = make_config(tmp_path, tmux, port=port, mode="automatic")
+    config.save_config(cfg)
+    config.ensure_control_token()
+    prepare_bound(monkeypatch, tmp_path, cfg)
+    gate.write_trigger_tokens(50_000, 1_048_576)
+    log = tmp_path / "tmux-auto.log"
+    hook_rc = tmp_path / "auto-hook-rc.txt"
+    monkeypatch.setenv("FAKE_TMUX_SOCKET", cfg.tmux_socket)
+    monkeypatch.setenv("FAKE_TMUX_SESSION", cfg.tmux_session)
+    monkeypatch.setenv("FAKE_TMUX_LOG", str(log))
+    monkeypatch.setenv("FAKE_HOOK_RC", str(hook_rc))
+    monkeypatch.setenv("FAKE_NEW_SESSION", NEW)
+    monkeypatch.setenv("FAKE_CWD", str(cfg.managed_cwd))
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1] / "src"))
+    server = web.make_server(cfg)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        env = os.environ.copy()
+        env["TMUX"] = "/tmp/tmux-test/%s,123,0" % cfg.tmux_socket
+        env["TMUX_PANE"] = "%7"
+        payload = json.dumps({"hook_event_name": "Stop", "session_id": OLD, "cwd": str(cfg.managed_cwd)})
+        result = subprocess.run(
+            [sys.executable, "-m", "kimi_lastcall.gate"],
+            input=payload,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=5,
+            check=False,
+        )
+        assert result.returncode == 0
+        assert "auto_handoff_accepted" in state.audit_path().read_text(encoding="utf-8")
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            request_state = secure.read_private_json(state.auto_handoff_path())
+            if request_state["status"] == "completed":
+                break
+            time.sleep(0.05)
+        assert request_state["status"] == "completed"
+        assert binding.load_binding()["session_id"] == NEW
+        receipt = secure.read_private_json(state.receipt_path())
+        assert receipt["execution_source"] == "automatic_relay"
         sends = [json.loads(row) for row in log.read_text(encoding="utf-8").splitlines()]
         assert [row[-1] for row in sends] == ["C-u", "/new", "Enter"]
     finally:

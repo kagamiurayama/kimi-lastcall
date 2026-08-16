@@ -2,14 +2,14 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**不许无声退场。留下一封可核验的交接信——然后只在人类确认后换窗。**
+**不许无声退场。留下一封可核验的交接信——再按明确的本机策略自动换窗，或由人类确认换窗。**
 
 kimi-lastcall 是一层用于受管 [Kimi Code](https://www.kimi.com/) TUI 会话的本地连续性机制。它刻意拆成两半：
 
 - **Relay 落笔闸：**上下文快耗尽的窗口在停止前，必须由它自己亲笔留下交接信。
-- **Last-call 换窗控制器：**人类看过交接后，才向受管 tmux 座位发送一次固定的 `/new`；新窗口必须通过 `SessionStart`、cwd、座位、`state.json` 与 `wire.jsonl` 的机械验证，才能接管。
+- **Last-call 换窗控制器：**亲笔交接机械就绪后，按配置自动发送、或经人类确认兜底发送一次固定的 `/new`；新窗口必须通过 `SessionStart`、cwd、座位、`state.json` 与 `wire.jsonl` 的机械验证，才能接管。
 
-达到阈值不会自动换窗。模型拿不到确认短语。控制器也不会替模型撰写或改写交接信。
+单凭达到阈值不会换窗：当前窗口还必须写好必需文件，并落下与本 session 绑定的 done 标记。hook 永远不碰终端输入；控制器也不会替模型撰写或改写交接信。
 
 ## 完整流程
 
@@ -23,7 +23,8 @@ Kimi Stop hook
                        ├─ LETTER/HANDOFF 文件
                        └─ 与本 session 绑定的 done 标记
                                       │
-人类打开本地面板 → 预览 → 输入精确短语 → 确认
+自动策略：鉴权排队（先完成 HTTP 回包）
+或人工策略/兜底：预览 → 精确短语 → 确认
                                       │
 受管 tmux 收到：C-u → 字面量 /new → Enter
                                       │
@@ -70,10 +71,19 @@ kimi-lastcall configure \
   --tmux-socket kimi-resident \
   --tmux-session kimi-resident \
   --handoff-file LETTER.md \
-  --handoff-file HANDOVER.md
+  --handoff-file HANDOVER.md \
+  --switch-mode automatic
 ```
 
-cwd 必须已存在且属于当前用户。配置写入 `~/.local/state/kimi-lastcall/`：目录权限精确为 0700，权威文件为 0600。控制器只监听 `127.0.0.1`。
+cwd 必须已存在且属于当前用户。`--switch-mode automatic` 必须显式选择；省略它（或写 `manual`）则只允许人类确认后换窗。配置写入 `~/.local/state/kimi-lastcall/`：目录权限精确为 0700，权威文件为 0600。控制器只监听 `127.0.0.1`。
+
+无人值守的自动座位还应在 Kimi Code 的 `tui.toml`（通常为 `~/.kimi-code/tui.toml`）加入顶层设置：
+
+```toml
+cache_expiry_hint = false
+```
+
+它只关闭 Kimi 的“缓存过期、下一条消息将重新发送完整历史”弹窗；该弹窗会截住下一条输入，直到有人作出选择。它不会关闭上下文压缩。automatic 模式下，`kimi-lastcall` 会只读检查这一设置；无法证明弹窗已关闭时会明确报警，但绝不会替用户静默改写 Kimi 的全局 UI 配置。
 
 ### 3. 启动控制器
 
@@ -111,7 +121,7 @@ tmux -L kimi-resident new-session \
 
 运行 `kimi-lastcall status`；首次绑定完成后，面板就可以使用。
 
-### 5. 写信、落标、预览、确认
+### 5. 写信、落标，然后换窗
 
 Relay 触发后，由当前窗口亲笔写交接信。五节模板可以这样查看：
 
@@ -125,14 +135,24 @@ kimi-lastcall template
 kimi-lastcall done
 ```
 
-然后在面板里：
+在 `automatic` 模式下，再停止一次。Stop hook 会证明自己属于受管座位、持有一把内核文件锁，并向带鉴权的回环控制器发送一份不含正文的请求，收到 `202 Accepted` 后退出。hook 进程退出、内核释放锁以后，后台 worker 才能继续；它会重新核验 binding、阈值、交接文件、done 标记与 tmux 身份，并且只发送一次字面量 `/new`。
+
+在 `manual` 模式下——或自动模式故障后的人工兜底——使用面板：
 
 1. 查看上下文用量、落笔阈值、交接文件状态与剩余写信空间；
 2. 点击“预览”；
 3. 精确输入面板展示的 `NEW <digest>` 短语；
 4. 点击“确认并换窗”。
 
-只有这一步之后，控制器才会清空当前输入行并发送字面量 `/new`。只有新 Kimi session 通过机械验证并完成绑定，这次操作才算成功。超时会保持故障关闭并显示出来，不会偷偷报成功。
+只有新 Kimi session 通过机械验证并完成绑定，这次操作才算成功。超时会保持故障关闭并显示出来，不会偷偷报成功，也不会自动重发。
+
+无需重装 hooks 就能切换策略：
+
+```sh
+kimi-lastcall set-mode automatic   # 或：manual
+```
+
+切换模式后请重启 `kimi-lastcall serve`；运行中的控制器刻意不会热加载权威配置。
 
 ## Relay 落笔闸
 
@@ -140,6 +160,7 @@ kimi-lastcall done
 
 - 未达到阈值（默认上下文容量的 70%）：正常停止。
 - 达到或超过阈值、且没有 done 标记：阻止停止，并显示操作步骤和剩余写信空间。
+- 达到或超过阈值、且已有 done 标记：manual 模式正常放行；automatic 模式向已验证的控制器排队换窗。
 - 每个 session 最多阻止三次；第四次会带着醒目 `handoff_missing` 记录放行，所以坏掉的 hook 不能把 TUI 永久困住。
 - 计数损坏或模型容量未知时故障放行，同时留下不含正文的审计诊断。
 - done 与 skip-once 都与 session 绑定，不能跨窗借用。
@@ -195,6 +216,9 @@ kimi-lastcall configure \
 - 权威文件拒绝软链、错误属主、错误权限、未知字段与中途改靶。
 - `SessionStart` pending 身份用 `O_EXCL` 创建，第二个 session 无法覆盖它。
 - tmux 只接收 argv，不经过 shell；唯一可发送的终端正文是固定 `/new`。
+- 自动请求与当前原始 session、cwd、tmux socket/session/pane、阈值、必需文件及 done 标记全部绑定；公开状态只显示摘要。
+- 控制器先持久化请求并回包，flush 完 HTTP 响应后才启动 worker；worker 还必须取得 Stop hook 的内核锁，因此 `/new` 不会重入发起请求的进程。
+- 一旦存在 switch-in-progress，就表示 `/new` 可能已经发出。重启后绝不自动重发，面板会明确要求人工恢复。
 - 公开状态只返回文件是否就绪与 session 摘要，不返回交接正文或原始 session id。
 - 审计只记录决策与错误分类，不记录 transcript 或信件内容。
 - 如果 SessionStart 发生时控制器离线，控制器重启后会重新验证被冻结的 pending，再决定是否接管；不会因为“服务重启了”就直接清标。
@@ -210,6 +234,7 @@ kimi-lastcall status                查看落笔闸与控制器状态
 kimi-lastcall template              打印亲笔 Relay 模板
 kimi-lastcall done                  标记当前绑定 session 已完成交接
 kimi-lastcall set-trigger TOKENS    设置 50k 步长的精确阈值
+kimi-lastcall set-mode MODE         选择 manual 或 automatic 换窗
 ```
 
 ## 开发与验证
@@ -218,7 +243,7 @@ kimi-lastcall set-trigger TOKENS    设置 50k 步长的精确阈值
 python3 -m pytest -q
 ```
 
-测试只使用临时目录和合成身份。测试套件含一条可执行的假 tmux 端到端：它真实接收固定按键序列，创建合成 Kimi session，通过带鉴权 HTTP 服务运行真实 `SessionStart` hook，最终核对绑定与收据。
+测试只使用临时目录和合成身份。测试套件为人工与自动两条路径各准备了一条可执行假 tmux 端到端；自动路径真实走 Stop hook → HTTP 排队 → 后台 worker → 固定 `/new` → `SessionStart` 接管，并核对最终 binding 与收据。
 
 ## 卸载
 

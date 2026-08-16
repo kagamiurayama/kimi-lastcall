@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from . import secure, state
 
 
-CONTROLLER_SCHEMA = "kimi_lastcall.controller.v1"
+CONTROLLER_SCHEMA_V1 = "kimi_lastcall.controller.v1"
+CONTROLLER_SCHEMA = "kimi_lastcall.controller.v2"
 TOKEN_FILENAME = "control.token"
 CONTROLLER_FILENAME = "controller.json"
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -36,6 +37,7 @@ class ControllerConfig:
     port: int = 8765
     switch_timeout_seconds: int = 30
     artifact_timeout_seconds: int = 5
+    switch_mode: str = "manual"
 
     def to_json(self) -> Dict[str, Any]:
         return {
@@ -50,6 +52,7 @@ class ControllerConfig:
             "port": self.port,
             "switch_timeout_seconds": self.switch_timeout_seconds,
             "artifact_timeout_seconds": self.artifact_timeout_seconds,
+            "switch_mode": self.switch_mode,
         }
 
 
@@ -104,6 +107,7 @@ def build_config(
     port: int = 8765,
     switch_timeout_seconds: int = 30,
     artifact_timeout_seconds: int = 5,
+    switch_mode: str = "manual",
 ) -> ControllerConfig:
     cwd = Path(managed_cwd).expanduser()
     if not cwd.is_absolute():
@@ -128,6 +132,8 @@ def build_config(
         raise ControllerConfigError("controller_artifact_timeout_invalid")
     if not 1 <= artifact_timeout_seconds <= 30:
         raise ControllerConfigError("controller_artifact_timeout_invalid")
+    if switch_mode not in {"manual", "automatic"}:
+        raise ControllerConfigError("controller_switch_mode_invalid")
     files = tuple(_relative_handoff(item) for item in (handoff_files or ("HANDOFF.md",)))
     if not files or len(files) > 8 or len(set(files)) != len(files):
         raise ControllerConfigError("controller_handoff_files_invalid")
@@ -145,11 +151,12 @@ def build_config(
         port=port,
         switch_timeout_seconds=switch_timeout_seconds,
         artifact_timeout_seconds=artifact_timeout_seconds,
+        switch_mode=switch_mode,
     )
 
 
 def parse_config(payload: Dict[str, Any]) -> ControllerConfig:
-    expected = {
+    common = {
         "schema",
         "managed_cwd",
         "tmux_socket",
@@ -162,7 +169,9 @@ def parse_config(payload: Dict[str, Any]) -> ControllerConfig:
         "switch_timeout_seconds",
         "artifact_timeout_seconds",
     }
-    if set(payload) != expected or payload.get("schema") != CONTROLLER_SCHEMA:
+    schema = payload.get("schema")
+    expected = common if schema == CONTROLLER_SCHEMA_V1 else common | {"switch_mode"}
+    if schema not in {CONTROLLER_SCHEMA_V1, CONTROLLER_SCHEMA} or set(payload) != expected:
         raise ControllerConfigError("controller_config_shape_invalid")
     files = payload.get("handoff_files")
     callback = payload.get("on_adopt")
@@ -179,6 +188,7 @@ def parse_config(payload: Dict[str, Any]) -> ControllerConfig:
         port=payload.get("port"),
         switch_timeout_seconds=payload.get("switch_timeout_seconds"),
         artifact_timeout_seconds=payload.get("artifact_timeout_seconds"),
+        switch_mode=("manual" if schema == CONTROLLER_SCHEMA_V1 else payload.get("switch_mode")),
     )
 
 

@@ -201,7 +201,7 @@ def test_saved_450k_threshold_passes_at_440k_and_blocks_at_460k(tmp_path):
     assert "450,000" in above.stderr
     # remaining writing room is shown: 1,048,576 - 460,000
     assert "588,576" in above.stderr
-    assert "never runs /new" in above.stderr
+    assert "hook never writes the letter or sends terminal input" in above.stderr
 
 
 def test_block_message_covers_why_how_skip_uninstall(tmp_path):

@@ -64,11 +64,12 @@ Relay: no silent exits. Leave a verifiable handoff:
   2. Save it where the next window will read it (e.g. HANDOFF.md in your project root).
   3. Mark this session done:
        touch {marker}
-  4. Stop again — this gate will let you through.
+  4. Stop again — manual mode lets you through; automatic mode queues one verified switch.
 
 This is block {block_count}/{max_blocks} for this session. After {max_blocks} blocked stops the gate
 steps aside, lets the session end, and records handoff_missing so the next window knows.
-The gate never writes the letter for you and never runs /new on its own.
+The hook never writes the letter or sends terminal input. In automatic mode it only asks the
+authenticated loopback controller, which rechecks the managed seat before sending fixed /new.
 
 Skip once (this session only):
   {skip_env}={session_id}        # value must equal this session id
@@ -91,6 +92,12 @@ HANDOFF_MISSING_NOTICE = (
     "handoff letter (handoff_missing). You are starting without a verified handoff — do not "
     "trust prior session state until you have checked for a handoff file yourself."
 )
+
+AUTO_HANDOFF_WARNING = """[kimi-lastcall] The handoff is complete, but the automatic switch request failed ({code}).
+The Stop hook is failing open so it cannot trap the session. Use the local panel's human-confirmed
+fallback after checking the controller. The hook itself sent no terminal input; if the response was
+lost after acceptance, the controller's persisted status remains authoritative and idempotent.
+"""
 
 
 def audit(record: Dict[str, Any], session_id: Optional[str] = None) -> None:
@@ -378,8 +385,7 @@ def handle_session_start(payload: Dict[str, Any]) -> int:
 
 
 def handle_stop(session_id: str) -> int:
-    if state.marker_path(session_id).exists():
-        return 0
+    marker_ready = state.marker_path(session_id).exists()
     wire = find_wire(session_id)
     if wire is None:
         return 0
@@ -394,6 +400,27 @@ def handle_stop(session_id: str) -> int:
             session_id,
         )
     if used_tokens < trigger_tokens:
+        return 0
+
+    if marker_ready:
+        from . import automation
+
+        try:
+            result = automation.request_from_stop_hook(session_id)
+        except automation.AutoHandoffNotConfigured:
+            return 0
+        except Exception as exc:
+            code = str(exc) or type(exc).__name__
+            audit({"action": "auto_handoff_failed_open", "code": code}, session_id)
+            print(AUTO_HANDOFF_WARNING.format(code=code), file=sys.stderr)
+            return 0
+        audit(
+            {
+                "action": "auto_handoff_accepted",
+                "request_status": result.get("status"),
+            },
+            session_id,
+        )
         return 0
 
     if skip_armed(session_id):
