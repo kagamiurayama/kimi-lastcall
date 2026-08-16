@@ -11,6 +11,7 @@ before the first modification as a second, manual recovery path.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import difflib
 import json
 import os
@@ -230,6 +231,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             print("tmux online: %s" % ("yes" if controller_status["tmux"]["online"] else "no"))
             print("session bound: %s" % ("yes" if controller_status["current_session"] else "no"))
             print("ready to switch: %s" % ("yes" if controller_status["ready_to_switch"] else "no"))
+            print("switch mode: %s" % controller_status["switch_mode"])
             if controller_status["blockers"]:
                 print("blockers: %s" % ", ".join(controller_status["blockers"]))
         else:
@@ -273,6 +275,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
             port=args.port,
             switch_timeout_seconds=args.switch_timeout,
             artifact_timeout_seconds=args.artifact_timeout,
+            switch_mode=args.switch_mode,
         )
     except ControllerConfigError as exc:
         print("kimi-lastcall: configuration rejected: %s" % exc, file=sys.stderr)
@@ -291,6 +294,7 @@ def cmd_configure(args: argparse.Namespace) -> int:
     print("config: %s" % controller_path())
     print("managed cwd: %s" % value.managed_cwd)
     print("tmux: %s / %s" % (value.tmux_socket, value.tmux_session))
+    print("switch mode: %s" % value.switch_mode)
     print("next: kimi-lastcall serve")
     return 0
 
@@ -341,6 +345,36 @@ def cmd_set_trigger(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_mode(args: argparse.Namespace) -> int:
+    try:
+        current = load_config(required=True)
+        if current is None:
+            raise ControllerConfigError("controller_not_configured")
+        updated = replace(current, switch_mode=args.mode)
+        # Round-trip through the public validator before replacing authority
+        # state; a typo must never silently relax the human gate.
+        validated = build_config(
+            managed_cwd=str(updated.managed_cwd),
+            tmux_socket=updated.tmux_socket,
+            tmux_session=updated.tmux_session,
+            tmux_bin=updated.tmux_bin,
+            handoff_files=updated.handoff_files,
+            on_adopt=updated.on_adopt,
+            host=updated.host,
+            port=updated.port,
+            switch_timeout_seconds=updated.switch_timeout_seconds,
+            artifact_timeout_seconds=updated.artifact_timeout_seconds,
+            switch_mode=updated.switch_mode,
+        )
+        save_config(validated)
+    except (ControllerConfigError, secure.SecureStateError, OSError) as exc:
+        print("kimi-lastcall: mode change rejected: %s" % exc, file=sys.stderr)
+        return 1
+    print("kimi-lastcall: switch mode set to %s" % validated.switch_mode)
+    print("restart `kimi-lastcall serve` for the running controller to load this mode")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kimi-lastcall",
@@ -385,6 +419,12 @@ def build_parser() -> argparse.ArgumentParser:
     child.add_argument("--port", type=int, default=8765, help="loopback control-panel port")
     child.add_argument("--switch-timeout", type=int, default=30)
     child.add_argument("--artifact-timeout", type=int, default=5)
+    child.add_argument(
+        "--switch-mode",
+        choices=("manual", "automatic"),
+        default="manual",
+        help="manual confirmation (default) or automatic switch after verified handoff",
+    )
     child.add_argument("--dry-run", action="store_true")
     child.set_defaults(handler=cmd_configure)
 
@@ -397,6 +437,10 @@ def build_parser() -> argparse.ArgumentParser:
     child = sub.add_parser("set-trigger", help="set the handoff threshold in exact 50k steps")
     child.add_argument("tokens", type=int)
     child.set_defaults(handler=cmd_set_trigger)
+
+    child = sub.add_parser("set-mode", help="choose manual or automatic verified switching")
+    child.add_argument("mode", choices=("manual", "automatic"))
+    child.set_defaults(handler=cmd_set_mode)
     return parser
 
 

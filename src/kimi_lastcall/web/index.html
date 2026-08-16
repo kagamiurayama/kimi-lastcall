@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">RELAY CONTROL</p>
         <h1>kimi-lastcall</h1>
-        <p class="subtitle" data-i18n="subtitle">亲笔交接，人工确认，验证后换窗。</p>
+        <p class="subtitle" data-i18n="subtitle">亲笔交接；按本机策略自动或人工换窗；验证后接管。</p>
       </div>
       <button id="language" class="quiet" type="button">EN</button>
     </header>
@@ -30,6 +30,8 @@
           <div><dt data-i18n="model">模型</dt><dd id="model">—</dd></div>
           <div><dt data-i18n="tmux">受管终端</dt><dd id="tmux">—</dd></div>
           <div><dt data-i18n="handoff">交接文件</dt><dd id="handoff">—</dd></div>
+          <div><dt data-i18n="mode">换窗模式</dt><dd id="mode">—</dd></div>
+          <div><dt data-i18n="autoTask">自动任务</dt><dd id="autoTask">—</dd></div>
         </dl>
         <div class="meter"><span id="usageBar"></span></div>
         <p id="usageText" class="metric">—</p>
@@ -47,9 +49,9 @@
 
     <section class="card switch-card">
       <div class="card-title">
-        <div><p class="eyebrow">HUMAN GATE</p><h2 data-i18n="switchTitle">开始新窗口</h2></div>
+        <div><p class="eyebrow">MANUAL FALLBACK</p><h2 data-i18n="switchTitle">人工换窗兜底</h2></div>
       </div>
-      <p data-i18n="switchCopy">这里只发送一次固定的 /new。它不会替你写交接信，也不会在阈值到达时自动换窗。</p>
+      <p data-i18n="switchCopy">自动模式通常无需操作这里。故障时可预览并确认一次固定的 /new；它永远不会替你写交接信。</p>
       <ol id="blockers" class="blockers"></ol>
       <div class="actions">
         <button id="preview" class="secondary" type="button" data-i18n="preview">预览</button>

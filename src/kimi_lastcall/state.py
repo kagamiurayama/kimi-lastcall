@@ -24,6 +24,7 @@ PENDING_FILENAME = "session-start-pending.json"
 BINDING_FILENAME = "current-binding.json"
 SWITCH_FILENAME = "switch-in-progress.json"
 RECEIPT_FILENAME = "last-switch-receipt.json"
+AUTO_HANDOFF_FILENAME = "auto-handoff-request.json"
 
 # Session ids become file names, so keep the accepted alphabet tight.
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -100,3 +101,11 @@ def switch_path() -> Path:
 
 def receipt_path() -> Path:
     return state_dir() / RECEIPT_FILENAME
+
+
+def auto_handoff_path() -> Path:
+    return state_dir() / AUTO_HANDOFF_FILENAME
+
+
+def auto_hook_lease_path(session_id: str) -> Path:
+    return state_dir() / (session_id + ".auto-hook.lock")

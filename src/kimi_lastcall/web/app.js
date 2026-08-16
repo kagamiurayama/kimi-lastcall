@@ -1,25 +1,29 @@
 const $ = (id) => document.getElementById(id);
 const copy = {
   zh: {
-    subtitle: "亲笔交接，人工确认，验证后换窗。", session: "当前会话", sessionId: "会话指纹",
-    model: "模型", tmux: "受管终端", handoff: "交接文件", threshold: "落笔阈值",
-    save: "保存阈值", switchTitle: "开始新窗口", switchCopy: "这里只发送一次固定的 /new。它不会替你写交接信，也不会在阈值到达时自动换窗。",
+    subtitle: "亲笔交接；按本机策略自动或人工换窗；验证后接管。", session: "当前会话", sessionId: "会话指纹",
+    model: "模型", tmux: "受管终端", handoff: "交接文件", mode: "换窗模式", autoTask: "自动任务", threshold: "落笔阈值",
+    save: "保存阈值", switchTitle: "人工换窗兜底", switchCopy: "自动模式通常无需操作这里。故障时可预览并确认一次固定的 /new；它永远不会替你写交接信。",
     preview: "预览", execute: "确认并换窗", confirmLabel: "请输入下方确认短语",
     localOnly: "仅监听本机回环地址；页面不会上传会话或交接正文。",
     ready: "可以换窗", blocked: "尚未就绪", online: "在线", offline: "离线", saved: "阈值已保存",
     unknown: "未知", filesReady: "已就绪", filesMissing: "未完成", loading: "正在读取本地状态…",
-    switchDone: "新窗口已验证并接管。", switchWaiting: "已发送 /new，等待新窗口验证；写入面保持关闭。"
+    switchDone: "新窗口已验证并接管。", switchWaiting: "已发送 /new，等待新窗口验证；写入面保持关闭。",
+    manual: "人工确认", automatic: "自动换窗", none: "无", queued: "已排队", waiting_for_stop: "等待旧回合结束", running: "正在换窗",
+    completed: "已完成", failed_closed: "失败，已安全暂停", manual_recovery_required: "需要人工恢复", superseded: "已由其他换窗取代"
   },
   en: {
-    subtitle: "Handwritten handoff, human confirmation, verified session switch.", session: "Current session",
+    subtitle: "Handwritten handoff; automatic or human-confirmed local switch; verified adoption.", session: "Current session",
     sessionId: "Session fingerprint", model: "Model", tmux: "Managed terminal", handoff: "Handoff files",
-    threshold: "Writing threshold", save: "Save threshold", switchTitle: "Start a new window",
-    switchCopy: "This sends the fixed /new command once. It never writes your handoff or switches automatically at the threshold.",
+    mode: "Switch mode", autoTask: "Automatic task", threshold: "Writing threshold", save: "Save threshold", switchTitle: "Manual switch fallback",
+    switchCopy: "Automatic mode normally needs no action here. On failure, preview and confirm one fixed /new; it never writes your handoff.",
     preview: "Preview", execute: "Confirm and switch", confirmLabel: "Type the exact phrase below",
     localOnly: "Loopback only. Session and handoff content never leave this machine.", ready: "Ready",
     blocked: "Not ready", online: "Online", offline: "Offline", saved: "Threshold saved", unknown: "Unknown",
     filesReady: "Ready", filesMissing: "Incomplete", loading: "Reading local status…",
-    switchDone: "The new window is verified and bound.", switchWaiting: "/new sent; waiting for verified SessionStart. Writes remain closed."
+    switchDone: "The new window is verified and bound.", switchWaiting: "/new sent; waiting for verified SessionStart. Writes remain closed.",
+    manual: "Human-confirmed", automatic: "Automatic", none: "None", queued: "Queued", waiting_for_stop: "Waiting for old turn to stop", running: "Switching",
+    completed: "Completed", failed_closed: "Failed closed", manual_recovery_required: "Manual recovery required", superseded: "Superseded"
   }
 };
 let language = localStorage.getItem("kimi-lastcall-language") || "zh";
@@ -90,6 +94,8 @@ function render(status) {
   $("model").textContent = status.usage.model || t("unknown");
   $("tmux").textContent = status.tmux.online ? t("online") : t("offline");
   $("handoff").textContent = status.handoff.all_files_ready ? t("filesReady") : t("filesMissing");
+  $("mode").textContent = t(status.switch_mode || "manual");
+  $("autoTask").textContent = status.auto_handoff ? t(status.auto_handoff.status) : t("none");
   const used = status.usage.used_tokens || 0;
   const limit = status.usage.context_limit || 0;
   $("usageBar").style.width = limit ? `${Math.min(100, used / limit * 100)}%` : "0%";

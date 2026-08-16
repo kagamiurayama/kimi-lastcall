@@ -2,14 +2,14 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**No silent exits. Leave a verifiable handoff — then switch only with human confirmation.**
+**No silent exits. Leave a verifiable handoff — then switch automatically or with human confirmation, by explicit local policy.**
 
 kimi-lastcall is a local continuity layer for a managed [Kimi Code](https://www.kimi.com/) TUI session. It has two deliberately separate halves:
 
 - **Relay gate:** before a context-heavy window stops, ask that same window to write a handwritten handoff.
-- **Last-call controller:** after a human reviews the handoff, send one fixed `/new` command to the managed tmux seat and accept the new session only after `SessionStart`, cwd, seat, `state.json`, and `wire.jsonl` all verify.
+- **Last-call controller:** after the handwritten handoff is mechanically ready, send one fixed `/new` command either automatically or through a human-confirmed fallback, then accept the new session only after `SessionStart`, cwd, seat, `state.json`, and `wire.jsonl` all verify.
 
-The threshold never switches sessions by itself. The model never supplies the confirmation phrase. The controller never writes or rewrites the handoff.
+The threshold alone never switches sessions: the same window must write the required files and create its session-bound done marker. The hook never sends terminal input. The controller never writes or rewrites the handoff.
 
 ## What the complete flow looks like
 
@@ -23,7 +23,8 @@ Kimi Stop hook
                          ├─ LETTER/HANDOFF files
                          └─ session-bound done marker
                                       │
-Human opens local panel → preview → types exact phrase → confirm
+Automatic policy: authenticated queue (HTTP response completes first)
+or manual policy/fallback: preview → exact phrase → confirm
                                       │
 Managed tmux receives: C-u → literal /new → Enter
                                       │
@@ -70,10 +71,11 @@ kimi-lastcall configure \
   --tmux-socket kimi-resident \
   --tmux-session kimi-resident \
   --handoff-file LETTER.md \
-  --handoff-file HANDOVER.md
+  --handoff-file HANDOVER.md \
+  --switch-mode automatic
 ```
 
-The cwd must already exist and belong to the current user. Configuration is stored under `~/.local/state/kimi-lastcall/` with a 0700 directory and 0600 authority files. The controller listens only on `127.0.0.1`.
+The cwd must already exist and belong to the current user. `--switch-mode automatic` is explicit; omit it (or use `manual`) to keep human confirmation as the only switch trigger. Configuration is stored under `~/.local/state/kimi-lastcall/` with a 0700 directory and 0600 authority files. The controller listens only on `127.0.0.1`.
 
 ### 3. Start the controller
 
@@ -111,7 +113,7 @@ The `SessionStart` hook proves all three tmux identities (inherited socket, quer
 
 Run `kimi-lastcall status`; the panel becomes usable after the first binding.
 
-### 5. Write, mark, preview, confirm
+### 5. Write, mark, then switch
 
 When Relay fires, write the handoff in the current window. The five-section template is available with:
 
@@ -125,14 +127,24 @@ After the required handoff files are present, mark this exact session done:
 kimi-lastcall done
 ```
 
-In the panel:
+In `automatic` mode, stop again. The Stop hook proves that it belongs to the managed seat, holds a kernel file lease, posts a content-free request to the authenticated loopback controller, receives `202 Accepted`, and exits. The worker cannot proceed until the kernel releases that lease at hook-process exit; it then rechecks the binding, threshold, handoff files, marker, and tmux identity before sending literal `/new` once.
+
+In `manual` mode—or as an automatic-mode recovery fallback—use the panel:
 
 1. inspect context usage, threshold, handoff readiness, and remaining writing room;
 2. choose **Preview**;
 3. type the displayed `NEW <digest>` phrase exactly;
 4. choose **Confirm and switch**.
 
-Only then does the controller clear the input line and send literal `/new`. The operation is complete only when the new Kimi session is mechanically verified and bound. A timeout stays fail-closed and remains visible; it is not silently declared successful.
+The operation is complete only when the new Kimi session is mechanically verified and bound. A timeout stays fail-closed and remains visible; it is not silently declared successful or automatically retried.
+
+You can change policy without reinstalling hooks:
+
+```sh
+kimi-lastcall set-mode automatic   # or: manual
+```
+
+Restart `kimi-lastcall serve` after changing mode; the running controller deliberately does not hot-reload authority configuration.
 
 ## The Relay gate
 
@@ -140,6 +152,7 @@ On every `Stop`, Relay reads the last local `usage.record` from that session's `
 
 - Below the trigger (default 70% of the context limit): stop normally.
 - At or above it, without a done marker: block the stop with instructions and remaining writing room.
+- At or above it with a done marker: manual mode allows the stop; automatic mode queues the verified controller switch.
 - At most three blocked stops per session. The fourth stop is allowed with a loud `handoff_missing` record, so the hook cannot trap you forever.
 - A corrupt counter or unrecognized model capacity fails open with a non-content audit diagnostic.
 - Done and skip-once markers are session-bound.
@@ -195,6 +208,9 @@ Additional boundaries:
 - Authority files reject symlinks, wrong owners, wrong modes, unknown fields, and retargeting.
 - The pending SessionStart identity is created with `O_EXCL`; a second session cannot overwrite it.
 - tmux is invoked with argv, never a shell. The only terminal payload is fixed `/new`.
+- Automatic requests are bound to the current raw session, cwd, tmux socket/session/pane, threshold, required files, and done marker; public status exposes only the digest.
+- The controller persists the request before replying and starts the worker only after flushing the HTTP response. The worker must then acquire the Stop hook's kernel lease, so `/new` cannot re-enter the process that queued it.
+- A persisted switch-in-progress marker means `/new` may already have been sent. After restart it is never sent again automatically; the panel reports that manual recovery is required.
 - Public status includes file readiness and session digests, never handoff bodies or raw session ids.
 - Audit entries contain decisions/error classes only, not transcript or handoff content.
 - If the controller was offline when SessionStart occurred, restarting it revalidates the frozen pending marker before adopting; it never clears the marker merely because it restarted.
@@ -210,6 +226,7 @@ kimi-lastcall status                show gate + controller state
 kimi-lastcall template              print the handwritten Relay template
 kimi-lastcall done                  mark the bound session handoff complete
 kimi-lastcall set-trigger TOKENS    set an exact 50k-step threshold
+kimi-lastcall set-mode MODE         choose manual or automatic switching
 ```
 
 ## Development
@@ -218,7 +235,7 @@ kimi-lastcall set-trigger TOKENS    set an exact 50k-step threshold
 python3 -m pytest -q
 ```
 
-Tests use temporary directories and synthetic identities only. The suite includes a fake executable tmux end-to-end test: it receives the exact key sequence, creates a synthetic Kimi session, runs the real `SessionStart` hook through the authenticated HTTP server, and verifies the final binding and receipt.
+Tests use temporary directories and synthetic identities only. The suite includes fake executable tmux end-to-end tests for both paths: one human-confirmed and one real Stop hook → HTTP queue → background worker → fixed `/new` → `SessionStart` adoption chain. Both verify the final binding and receipt.
 
 ## Uninstall
 
