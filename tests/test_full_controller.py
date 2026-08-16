@@ -556,6 +556,29 @@ def test_http_requires_authentication_and_sets_cookie(monkeypatch, tmp_path):
         assert jar
         with opener.open(base + "/api/v1/status", timeout=3) as status_response:
             assert json.loads(status_response.read())["ok"] is True
+        automatic = {
+            "schema": "kimi_lastcall.auto_handoff_signal.v1",
+            "event": "Stop",
+            "source": "relay_gate",
+            "session_id": OLD,
+            "cwd": str(cfg.managed_cwd),
+            "tmux_socket": cfg.tmux_socket,
+            "tmux_session": cfg.tmux_session,
+            "tmux_pane": "%7",
+        }
+        with pytest.raises(error.HTTPError) as unauthenticated:
+            http_json(base + "/api/v1/auto-handoff", body=automatic)
+        assert unauthenticated.value.code == 401
+        cookie_request = request.Request(
+            base + "/api/v1/auto-handoff",
+            data=json.dumps(automatic).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Origin": base},
+        )
+        with pytest.raises(error.HTTPError) as cookie_only:
+            opener.open(cookie_request, timeout=3)
+        assert cookie_only.value.code == 409
+        assert json.loads(cookie_only.value.read())["error"] == "auto_handoff_requires_bearer"
         hostile = request.Request(
             base + "/api/v1/settings",
             data=json.dumps({"trigger_tokens": 200_000}).encode("utf-8"),

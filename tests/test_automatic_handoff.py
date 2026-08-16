@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import fcntl
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,22 @@ def test_manual_mode_rejects_automatic_signal_but_manual_preview_stays_available
     with pytest.raises(controller.ControllerError, match="automatic_switch_disabled"):
         ctl.queue_auto_handoff(signal(cfg))
     assert ctl.preview()["confirmation_phrase"].startswith("NEW ")
+
+
+def test_queued_automatic_request_obeys_mode_disabled_before_execution(monkeypatch, tmp_path):
+    cfg = make_config(tmp_path)
+    prepare_bound(monkeypatch, tmp_path, cfg)
+    driver = FakeDriver(cfg, on_new=lambda: pytest.fail("manual mode must block /new"))
+    ctl = controller.Controller(cfg, driver=driver)
+    queued = ctl.queue_auto_handoff(signal(cfg))
+
+    ctl.config = replace(cfg, switch_mode="manual")
+    result = ctl.run_auto_handoff_worker(
+        queued["request_id"], OLD, hook_exit_timeout=0, sleeper=lambda ignored: None
+    )
+
+    assert result == {"status": "failed_closed", "error_code": "automatic_switch_disabled"}
+    assert driver.sent == 0
 
 
 def test_automatic_worker_uses_one_verified_switch_and_records_source(monkeypatch, tmp_path):
