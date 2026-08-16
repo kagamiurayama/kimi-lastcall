@@ -141,3 +141,13 @@ def test_packaged_template_matches_repo_template():
         encoding="utf-8"
     )
     assert packaged == repo
+
+
+def test_sdist_manifest_includes_repo_template():
+    manifest = Path(__file__).resolve().parents[1] / "MANIFEST.in"
+    entries = {
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "include templates/relay.md" in entries
