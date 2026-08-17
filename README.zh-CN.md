@@ -37,6 +37,18 @@ Kimi SessionStart 用 O_EXCL 冻结身份
 
 完整控制器是通过受管 tmux TUI 驱动 Kimi 的交互式 `/new`，不是私藏的 Kimi 远程 API；它也不会声称 `SessionStart` hook 自己能发起换窗。官方行为见 Kimi 的 [hooks](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html)、[sessions](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/sessions.html) 与 [slash commands](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/slash-commands.html) 文档。
 
+## 常见问题
+
+### 它会减少 token 消耗吗？
+
+不一定。换窗前写交接信、新窗口再读取交接信，都会在切换时增加一些 token 开销。之后的新窗口不再携带整段旧上下文，后续每轮请求可能更轻；但总量仍取决于任务长度、交接信大小，以及服务商的缓存与计费方式。我们尚未做出证明净节省的基准测试，也不把 kimi-lastcall 宣传成 token 优化工具。它的目标是让跨 session 的连续性变得明确、可查看、可核验。
+
+### 它和上下文压缩有什么区别？
+
+上下文压缩仍留在同一个 session 中，把较早的上下文浓缩后继续运行。kimi-lastcall 则要求当前窗口趁还有余量时写出一份明确、可供人阅读的交接信，再有意执行 `/new` 开启全新 session，并机械核验接管结果。交接信可以由人检查、修改，并与项目一起保存，而不只存在于一次自动压缩的结果里。
+
+两者可以共存。kimi-lastcall 不会关闭上下文压缩；automatic 模式只要求关闭 Kimi 的“缓存过期、下一条消息将重新发送完整历史”弹窗，因为它会截住固定的 `/new` 输入。上下文压缩仍可作为极限兜底。
+
 ## 环境要求
 
 - Python 3.8+

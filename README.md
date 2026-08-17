@@ -37,6 +37,18 @@ New local binding + optional integration callback + receipt
 
 The full controller drives Kimi's interactive `/new` command through a managed tmux TUI. It is not a hidden Kimi remote API and it does not claim that Kimi's `SessionStart` hook can initiate a switch by itself. See Kimi's official documentation for [hooks](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html), [sessions](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/sessions.html), and [slash commands](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/slash-commands.html).
 
+## Frequently asked questions
+
+### Does this reduce token usage?
+
+Not necessarily. Writing a handoff and reading it in the new session add some token overhead at switch time. Later turns may be lighter because the new session no longer carries the entire old context, but the total depends on task length, handoff size, and provider caching and accounting. We have not benchmarked a net saving and do not present kimi-lastcall as a token-optimization tool. Its goal is explicit, verifiable continuity across sessions.
+
+### How is this different from context compaction?
+
+Compaction stays in the same session and condenses earlier context so that the session can continue. kimi-lastcall asks the current session to write an explicit, human-readable handoff while it still has room, then deliberately starts a fresh session with `/new` and verifies the takeover. The handoff can be inspected, edited, and kept alongside the project instead of existing only inside an automatic compaction result.
+
+The two mechanisms can coexist. kimi-lastcall does not disable context compaction; it only asks users of automatic mode to disable Kimi's idle cache-cost dialog because that dialog can intercept the fixed `/new` input. Compaction remains available as a last-resort fallback.
+
 ## Requirements
 
 - Python 3.8+
