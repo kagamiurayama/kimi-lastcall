@@ -11,6 +11,8 @@ kimi-lastcall is a local continuity layer for a managed [Kimi Code](https://www.
 
 The threshold alone never switches sessions: the same window must write the required files and create its session-bound done marker. The hook never sends terminal input. The controller never writes or rewrites the handoff.
 
+Here, *handwritten* means written by the current Kimi agent during an ordinary turn and stored as project files. It does not mean human-written, non-LLM, or inherently more accurate than Kimi's own compaction summary.
+
 ## What the complete flow looks like
 
 ```text
@@ -43,11 +45,29 @@ The full controller drives Kimi's interactive `/new` command through a managed t
 
 Not necessarily. Writing a handoff and reading it in the new session add some token overhead at switch time. Later turns may be lighter because the new session no longer carries the entire old context, but the total depends on task length, handoff size, and provider caching and accounting. We have not benchmarked a net saving and do not present kimi-lastcall as a token-optimization tool. Its goal is explicit, verifiable continuity across sessions.
 
-### How is this different from context compaction?
+### How is this different from Kimi Code's own compaction?
 
-Compaction stays in the same session and condenses earlier context so that the session can continue. kimi-lastcall asks the current session to write an explicit, human-readable handoff while it still has room, then deliberately starts a fresh session with `/new` and verifies the takeover. The handoff can be inspected, edited, and kept alongside the project instead of existing only inside an automatic compaction result.
+First, the overlap: both mechanisms ask a model to decide what matters and condense older context. That is a shared mechanism, not a differentiator. *Handwritten handoff* must not be read as "the model does not summarize" or "the result is automatically more faithful."
+
+In the Kimi Code implementation reviewed for this comparison, compaction sends older textual messages to the LLM with a structured summary prompt, replaces that portion of the in-session context with the generated summary, and preserves the latest messages. See the reviewed [compaction implementation](https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/soul/compaction.py) and [summary prompt](https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/prompts/compact.md).
+
+| | Kimi Code compaction | kimi-lastcall |
+| --- | --- | --- |
+| Continuity unit | The current session continues with condensed context | A fresh session takes over after explicit `/new` |
+| Handoff artifact | Generated summary inside the session context | Human-readable project files written before switching |
+| Human control | Use `/compact` or automatic compaction | Inspect or edit the files before marking them done; choose automatic or confirmed switching |
+| Takeover | No new-session adoption step | Verify `SessionStart`, cwd, tmux seat, `state.json`, and `wire.jsonl`, then write a receipt |
+| Primary purpose | Relieve context pressure while continuing the session | Externalize handoff and verify an operational session rollover |
+
+kimi-lastcall does **not** claim a better summarizer, better factual fidelity, or lower token usage. Those would require comparative benchmarks that this project does not yet have.
 
 The two mechanisms can coexist. kimi-lastcall does not disable context compaction; it only asks users of automatic mode to disable Kimi's idle cache-cost dialog because that dialog can intercept the fixed `/new` input. Compaction remains available as a last-resort fallback.
+
+### Do I need kimi-lastcall?
+
+If Kimi Code's native compaction already gives you enough continuity, probably not. The native mechanism is simpler and has fewer moving parts.
+
+kimi-lastcall is for people who specifically want a durable handoff beside the project, a fresh-session boundary, an opportunity to inspect or edit the handoff, and mechanical evidence that the intended new session actually took over.
 
 ## Requirements
 
