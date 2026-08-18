@@ -11,6 +11,8 @@ kimi-lastcall 是一层用于受管 [Kimi Code](https://www.kimi.com/) TUI 会�
 
 单凭达到阈值不会换窗：当前窗口还必须写好必需文件，并落下与本 session 绑定的 done 标记。hook 永远不碰终端输入；控制器也不会替模型撰写或改写交接信。
 
+这里的“亲笔”是指由当前 Kimi agent 在正常回合中写入项目文件，而不是由控制器代写。它不表示“人类亲写”“没有使用 LLM”，也不表示天然比 Kimi 自带的压缩摘要更准确。
+
 ## 完整流程
 
 ```text
@@ -43,11 +45,29 @@ Kimi SessionStart 用 O_EXCL 冻结身份
 
 不一定。换窗前写交接信、新窗口再读取交接信，都会在切换时增加一些 token 开销。之后的新窗口不再携带整段旧上下文，后续每轮请求可能更轻；但总量仍取决于任务长度、交接信大小，以及服务商的缓存与计费方式。我们尚未做出证明净节省的基准测试，也不把 kimi-lastcall 宣传成 token 优化工具。它的目标是让跨 session 的连续性变得明确、可查看、可核验。
 
-### 它和上下文压缩有什么区别？
+### 它和 Kimi Code 自带的上下文压缩有什么区别？
 
-上下文压缩仍留在同一个 session 中，把较早的上下文浓缩后继续运行。kimi-lastcall 则要求当前窗口趁还有余量时写出一份明确、可供人阅读的交接信，再有意执行 `/new` 开启全新 session，并机械核验接管结果。交接信可以由人检查、修改，并与项目一起保存，而不只存在于一次自动压缩的结果里。
+先说共同点：两种机制都会让模型判断什么值得留下，并把旧上下文浓缩。这个过程是共同机制，不是差异。“亲笔交接”不能被理解成“模型没有做摘要”，也不能被理解成“结果自然更保真”。
+
+在本次对照所检查的 Kimi Code 实现中，压缩会把较早的文本消息连同结构化总结提示词交给 LLM，再用生成的摘要替换 session 内的旧上下文，同时保留最近的消息。可直接查看当时的[压缩实现](https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/soul/compaction.py)与[总结提示词](https://github.com/MoonshotAI/kimi-cli/blob/cbc15c076d17f70fec9f89c90c0502e68657f505/src/kimi_cli/prompts/compact.md)。
+
+| | Kimi Code 上下文压缩 | kimi-lastcall |
+| --- | --- | --- |
+| 连续性的单位 | 原 session 带着浓缩后的上下文继续 | 明确执行 `/new`，由新 session 接管 |
+| 交接载体 | session 上下文中的生成摘要 | 换窗前写入项目目录的可读文件 |
+| 人类控制 | 手动 `/compact` 或自动压缩 | done 前可检查、修改交接文件；可选自动或人工确认换窗 |
+| 接管过程 | 没有新 session 接管步骤 | 核验 `SessionStart`、cwd、tmux 座位、`state.json`、`wire.jsonl`，并留下收据 |
+| 主要目的 | 缓解上下文压力，让原 session 继续 | 外置交接，并核验一次实际的 session 轮换 |
+
+kimi-lastcall **不宣称**摘要能力更强、事实保真度更高或 token 更省。这些结论都需要目前尚未完成的对照基准。
 
 两者可以共存。kimi-lastcall 不会关闭上下文压缩；automatic 模式只要求关闭 Kimi 的“缓存过期、下一条消息将重新发送完整历史”弹窗，因为它会截住固定的 `/new` 输入。上下文压缩仍可作为极限兜底。
+
+### 我需要 kimi-lastcall 吗？
+
+如果 Kimi Code 原生压缩已经足够维持你的任务连续性，大概率不需要。原生机制更简单，活动部件也更少。
+
+kimi-lastcall 面向的是明确需要这些能力的人：把交接持久保存在项目旁边、以新 session 作为边界、在换窗前检查或修改交接，以及机械证明预期的新 session 确实完成了接管。
 
 ## 环境要求
 
