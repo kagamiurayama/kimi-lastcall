@@ -754,6 +754,22 @@ def test_stop_hook_http_automatic_switch_end_to_end(monkeypatch, tmp_path):
         env["TMUX"] = "/tmp/tmux-test/%s,123,0" % cfg.tmux_socket
         env["TMUX_PANE"] = "%7"
         payload = json.dumps({"hook_event_name": "Stop", "session_id": OLD, "cwd": str(cfg.managed_cwd)})
+        # First crossing: the prepared marker predates any gate demand, so the
+        # gate blocks and stamps its demand instead of trusting a stale letter.
+        first = subprocess.run(
+            [sys.executable, "-m", "kimi_lastcall.gate"],
+            input=payload,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=5,
+            check=False,
+        )
+        assert first.returncode == 2
+        assert state.demand_path(OLD).exists()
+        # The window re-checks the letter and re-touches the marker after the
+        # demand; only then does the gate queue the automatic switch.
+        state.marker_path(OLD).write_text("done\n", encoding="utf-8")
         result = subprocess.run(
             [sys.executable, "-m", "kimi_lastcall.gate"],
             input=payload,
@@ -765,6 +781,10 @@ def test_stop_hook_http_automatic_switch_end_to_end(monkeypatch, tmp_path):
         )
         assert result.returncode == 0
         assert "auto_handoff_accepted" in state.audit_path().read_text(encoding="utf-8")
+        # One-shot: demand advanced strictly past the marker; the marker file
+        # stays for the controller preflight but can no longer release.
+        assert state.marker_path(OLD).exists()
+        assert state.demand_path(OLD).stat().st_mtime > state.marker_path(OLD).stat().st_mtime
 
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:

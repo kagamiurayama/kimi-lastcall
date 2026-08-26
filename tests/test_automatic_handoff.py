@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import fcntl
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -335,10 +336,31 @@ def test_stop_gate_queues_after_done_marker_and_failure_never_traps(monkeypatch,
             "status": "queued", "request_id": "request", "session_digest": state.session_digest(session_id)
         },
     )
+    # The marker was touched before any gate demand (letter written early or
+    # days ago): the first crossing blocks and stamps the demand instead of
+    # accepting a possibly-stale letter.
+    assert gate.handle_stop(OLD) == 2
+    assert seen == []
+
+    # The window re-checks the letter and re-touches the marker after the
+    # demand — now the marker is fresh and the switch is queued.
+    secure.atomic_write_private(state.marker_path(OLD), "done\n")
     assert gate.handle_stop(OLD) == 0
     assert seen == [OLD]
     assert "auto_handoff_accepted" in state.audit_path().read_text(encoding="utf-8")
+    # The release is one-shot: the demand is advanced strictly past the
+    # marker (the marker file stays — the controller preflight re-checks it).
+    assert state.marker_path(OLD).exists()
+    assert state.demand_path(OLD).stat().st_mtime > state.marker_path(OLD).stat().st_mtime
 
+    # A later fresh marker whose switch request fails still fails open and
+    # keeps the marker fresh so the next stop can retry.
+    marker = state.marker_path(OLD)
+    secure.atomic_write_private(marker, "done\n")
+    # The consumed demand was advanced past the old marker (possibly into this
+    # same second); make the new letter unambiguously newer than the demand.
+    fresh = state.demand_path(OLD).stat().st_mtime + 1.0
+    os.utime(marker, (fresh, fresh))
     monkeypatch.setattr(
         automation,
         "request_from_stop_hook",
@@ -347,6 +369,9 @@ def test_stop_gate_queues_after_done_marker_and_failure_never_traps(monkeypatch,
     assert gate.handle_stop(OLD) == 0
     assert "controller_offline" in capsys.readouterr().err
     assert "auto_handoff_failed_open" in state.audit_path().read_text(encoding="utf-8")
+    # The failed request must not consume the release: the marker is still
+    # fresh, so the next stop retries the switch instead of demanding a letter.
+    assert gate.marker_fresh(OLD)
 
 
 def test_hook_post_requires_exact_bound_response():

@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -397,13 +398,86 @@ def test_skip_once_file_releases_exactly_once(tmp_path):
 
 def test_done_marker_releases_only_its_own_session(tmp_path):
     _, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
-    (state_dir / (SESSION_A + ".done")).write_text("done\n", encoding="utf-8")
+    marker = state_dir / (SESSION_A + ".done")
+    marker.write_text("done\n", encoding="utf-8")
+    # A marker older than the gate's demand is stale: it does not release.
+    old = time.time() - 8 * 86400  # the incident shape: an 8-day-old letter
+    os.utime(marker, (old, old))
+    blocked, _ = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert blocked.returncode == 2
 
+    # Re-checked and re-touched after the demand, the marker releases.
+    marker.touch()
     released, _ = run_gate(tmp_path, 800_000, session_id=SESSION_A)
     assert released.returncode == 0
 
     other, _ = run_gate(tmp_path, 800_000, session_id=SESSION_B)
     assert other.returncode == 2  # markers never cross sessions
+
+
+def test_letter_written_before_first_demand_needs_retouch(tmp_path):
+    """The incident shape: letter + marker days before the gate ever demanded.
+
+    A long-lived session wrote its letter early (or the window kept running
+    after writing it).  When usage finally crosses the trigger, the gate must
+    not hand off behind that stale letter — it blocks once, and only a marker
+    re-touched after the demand releases.
+    """
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(mode=0o700, exist_ok=True)
+    marker = state_dir / (SESSION_A + ".done")
+    marker.write_text("done\n", encoding="utf-8")
+    old = time.time() - 8 * 86400
+    os.utime(marker, (old, old))
+
+    blocked, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert blocked.returncode == 2
+    assert (state_dir / (SESSION_A + ".demand")).exists()  # demand anchored
+
+    marker.touch()  # letter re-checked in this window, marker re-touched
+    released, _ = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert released.returncode == 0
+
+
+def test_release_is_one_shot_and_redemands_fresh_letter(tmp_path):
+    """After a release the marker goes stale: if the window keeps running,
+    the next crossing demands a fresh letter instead of re-releasing."""
+    _, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    marker = state_dir / (SESSION_A + ".done")
+    marker.touch()
+
+    released, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert released.returncode == 0
+    # The marker file stays (controller preflight re-checks it) but the
+    # demand has been advanced strictly past it.
+    demand = state_dir / (SESSION_A + ".demand")
+    assert demand.stat().st_mtime > marker.stat().st_mtime
+
+    blocked_again, _ = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert blocked_again.returncode == 2  # fresh letter demanded
+
+
+def test_future_dated_marker_cannot_push_demand_beyond_now(tmp_path):
+    """Bad clock or restored backup: a future-dated marker releases, but the
+    demand must not follow it into the far future — otherwise no letter
+    would ever count as fresh again and the gate would nag until MAX_BLOCKS.
+    """
+    _, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    marker = state_dir / (SESSION_A + ".done")
+    marker.touch()
+    future = time.time() + 86400
+    os.utime(marker, (future, future))
+
+    released, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert released.returncode == 0
+    demand = state_dir / (SESSION_A + ".demand")
+    assert demand.stat().st_mtime <= time.time() + 2
+
+    # And the next real letter, written at honest wall-clock time, still counts.
+    fresh = demand.stat().st_mtime + 1.0
+    os.utime(marker, (fresh, fresh))
+    released_again, _ = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert released_again.returncode == 0
 
 
 def test_next_window_is_told_about_handoff_missing(tmp_path):
