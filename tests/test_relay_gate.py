@@ -457,6 +457,29 @@ def test_release_is_one_shot_and_redemands_fresh_letter(tmp_path):
     assert blocked_again.returncode == 2  # fresh letter demanded
 
 
+def test_future_dated_marker_cannot_push_demand_beyond_now(tmp_path):
+    """Bad clock or restored backup: a future-dated marker releases, but the
+    demand must not follow it into the far future — otherwise no letter
+    would ever count as fresh again and the gate would nag until MAX_BLOCKS.
+    """
+    _, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    marker = state_dir / (SESSION_A + ".done")
+    marker.touch()
+    future = time.time() + 86400
+    os.utime(marker, (future, future))
+
+    released, state_dir = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert released.returncode == 0
+    demand = state_dir / (SESSION_A + ".demand")
+    assert demand.stat().st_mtime <= time.time() + 2
+
+    # And the next real letter, written at honest wall-clock time, still counts.
+    fresh = demand.stat().st_mtime + 1.0
+    os.utime(marker, (fresh, fresh))
+    released_again, _ = run_gate(tmp_path, 800_000, session_id=SESSION_A)
+    assert released_again.returncode == 0
+
+
 def test_next_window_is_told_about_handoff_missing(tmp_path):
     for _ in range(4):
         run_gate(tmp_path, 800_000)  # ends with handoff_missing recorded

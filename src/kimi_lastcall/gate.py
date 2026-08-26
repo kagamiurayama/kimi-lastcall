@@ -146,8 +146,11 @@ def consume_marker(session_id: str) -> None:
         demand = state.demand_path(session_id)
         demand.touch()
         now = time.time()
-        # Strictly newer than the marker even on coarse-mtime filesystems.
-        os.utime(demand, (now, max(now, marker_mtime + 1.0)))
+        # Strictly newer than the marker even on coarse-mtime filesystems,
+        # but clamped to now: a future-dated marker (bad clock, restored
+        # backup) must not push the demand into the far future, or no new
+        # letter would ever count as fresh until MAX_BLOCKS fails open.
+        os.utime(demand, (now, max(now, min(marker_mtime, now) + 1.0)))
     except OSError as exc:
         audit({"action": "marker_consume_failed", "code": type(exc).__name__}, session_id)
 
