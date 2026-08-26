@@ -66,6 +66,9 @@ Relay: no silent exits. Leave a verifiable handoff:
        touch {marker}
   4. Stop again — manual mode lets you through; automatic mode queues one verified switch.
 
+Already touched the marker before this block? It only counts if it is newer than this demand —
+re-check the letter still reflects this window, then touch the marker again.
+
 This is block {block_count}/{max_blocks} for this session. After {max_blocks} blocked stops the gate
 steps aside, lets the session end, and records handoff_missing so the next window knows.
 The hook never writes the letter or sends terminal input. In automatic mode it only asks the
@@ -98,6 +101,55 @@ The Stop hook is failing open so it cannot trap the session. Use the local panel
 fallback after checking the controller. The hook itself sent no terminal input; if the response was
 lost after acceptance, the controller's persisted status remains authoritative and idempotent.
 """
+
+
+def marker_fresh(session_id: str) -> bool:
+    """The done marker only counts if it is newer than the latest demand.
+
+    Sessions are long-lived: a letter written days ago (marker touched, no
+    switch taken, work continued) must not release a handoff today.  The
+    anchor is the gate's own latest demand, not the session start — a letter
+    can be newer than the session start and still be stale.
+    """
+    try:
+        marker_mtime = state.marker_path(session_id).stat().st_mtime
+        demand_mtime = state.demand_path(session_id).stat().st_mtime
+    except OSError:
+        return False
+    # ``>=`` so a same-second block→letter→touch on coarse-mtime filesystems
+    # still counts; a stale marker is days old and never collides.
+    return marker_mtime >= demand_mtime
+
+
+def stamp_demand(session_id: str) -> None:
+    """Anchor "the gate demanded a letter now".  Best-effort, never raises."""
+    try:
+        state.state_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
+        state.demand_path(session_id).touch()
+    except OSError as exc:
+        audit({"action": "demand_stamp_failed", "code": type(exc).__name__}, session_id)
+
+
+def consume_marker(session_id: str) -> None:
+    """One-shot: advance the demand strictly past the current marker.
+
+    The marker file stays — the controller's switch preflight re-checks it —
+    but it is now stale relative to the demand: if the window keeps running
+    after this release, the next crossing demands a fresh letter instead of
+    re-releasing behind the old one.
+    """
+    try:
+        marker_mtime = state.marker_path(session_id).stat().st_mtime
+    except OSError:
+        marker_mtime = 0.0
+    try:
+        demand = state.demand_path(session_id)
+        demand.touch()
+        now = time.time()
+        # Strictly newer than the marker even on coarse-mtime filesystems.
+        os.utime(demand, (now, max(now, marker_mtime + 1.0)))
+    except OSError as exc:
+        audit({"action": "marker_consume_failed", "code": type(exc).__name__}, session_id)
 
 
 def audit(record: Dict[str, Any], session_id: Optional[str] = None) -> None:
@@ -385,7 +437,7 @@ def handle_session_start(payload: Dict[str, Any]) -> int:
 
 
 def handle_stop(session_id: str) -> int:
-    marker_ready = state.marker_path(session_id).exists()
+    marker_ready = marker_fresh(session_id)
     wire = find_wire(session_id)
     if wire is None:
         return 0
@@ -408,6 +460,11 @@ def handle_stop(session_id: str) -> int:
         try:
             result = automation.request_from_stop_hook(session_id)
         except automation.AutoHandoffNotConfigured:
+            # Manual mode: the release is one-shot too, or a session that
+            # keeps running after its letter would re-release on a stale
+            # marker at the next crossing.
+            consume_marker(session_id)
+            audit({"action": "handoff_released_manual"}, session_id)
             return 0
         except Exception as exc:
             code = str(exc) or type(exc).__name__
@@ -421,6 +478,7 @@ def handle_stop(session_id: str) -> int:
             },
             session_id,
         )
+        consume_marker(session_id)
         return 0
 
     if skip_armed(session_id):
@@ -449,6 +507,7 @@ def handle_stop(session_id: str) -> int:
     if not write_block_count(session_id, count + 1):
         # Without a persisted counter a block could repeat forever; fail open.
         return 0
+    stamp_demand(session_id)
 
     audit(
         {

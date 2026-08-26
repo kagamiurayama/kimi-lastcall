@@ -60,6 +60,15 @@ def marker_path(session_id: str) -> Path:
     return state_dir() / (session_id + ".done")
 
 
+def demand_path(session_id: str) -> Path:
+    """Demand anchor: the gate's latest letter demand for this session.
+
+    A done marker only counts when it is newer than this file — that is what
+    "the letter was written for this handoff" means on disk.
+    """
+    return state_dir() / (session_id + ".demand")
+
+
 def count_path(session_id: str) -> Path:
     """On-disk block counter, bound to the session id by file name."""
     return state_dir() / (session_id + ".count")
