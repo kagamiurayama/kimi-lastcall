@@ -151,3 +151,16 @@ def test_sdist_manifest_includes_repo_template():
         if line.strip() and not line.lstrip().startswith("#")
     }
     assert "include templates/relay.md" in entries
+
+
+def test_sdist_manifest_includes_tests_conftest():
+    # Without tests/conftest.py the unpacked sdist cannot put src/ on
+    # sys.path and every test errors with ModuleNotFoundError — the
+    # "run the tests from the sdist" validation silently breaks.
+    manifest = Path(__file__).resolve().parents[1] / "MANIFEST.in"
+    entries = {
+        line.strip()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "include tests/conftest.py" in entries
