@@ -65,7 +65,6 @@ def validate_session_artifacts(
     state_path = session_dir / "state.json"
     wire_path = session_dir / "agents" / "main" / "wire.jsonl"
     _regular_owner_file(state_path)
-    _regular_owner_file(wire_path)
     try:
         payload = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
@@ -82,31 +81,43 @@ def validate_session_artifacts(
         raise BindingError("session_state_cwd_invalid") from exc
     if state_cwd != config.managed_cwd or state_cwd != observed_cwd:
         raise BindingError("session_state_cwd_mismatch")
-    try:
-        wire_bytes = wire_path.read_bytes()
-    except OSError as exc:
-        raise BindingError("session_wire_invalid") from exc
     line_count = 0
-    wire_rows = wire_bytes.splitlines(keepends=True)
-    for index, raw in enumerate(wire_rows):
-        if not raw.strip():
-            continue
+    try:
+        wire_path.lstat()
+    except OSError:
+        # Kimi creates the wire lazily at session init, which can only happen
+        # after SessionStart hooks return.  A missing wire is a legitimate
+        # fresh-session state once state.json is fully validated; the session
+        # binds with cursor line 0 and the scanner picks the wire up when it
+        # appears.  Existing ancestors must still be real directories so the
+        # future wire cannot be redirected outside the session dir.
+        for ancestor in (wire_path.parent, wire_path.parent.parent):
+            if ancestor.is_symlink() or (ancestor.exists() and not ancestor.is_dir()):
+                raise BindingError("session_wire_invalid")
+    else:
+        _regular_owner_file(wire_path)
         try:
-            json.loads(raw)
-        except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
-            is_unterminated_tail = (
-                index == len(wire_rows) - 1
-                and not raw.endswith((b"\n", b"\r"))
-            )
-            if is_unterminated_tail:
-                # Kimi may be observed between two writes to the final JSONL row.
-                # That is transient; a newline-terminated malformed row is not.
-                raise BindingError("session_wire_not_ready") from exc
+            wire_bytes = wire_path.read_bytes()
+        except OSError as exc:
             raise BindingError("session_wire_invalid") from exc
-        else:
-            line_count += 1
-    if line_count < 1:
-        raise BindingError("session_wire_not_ready")
+        wire_rows = wire_bytes.splitlines(keepends=True)
+        for index, raw in enumerate(wire_rows):
+            if not raw.strip():
+                continue
+            try:
+                json.loads(raw)
+            except (UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                is_unterminated_tail = (
+                    index == len(wire_rows) - 1
+                    and not raw.endswith((b"\n", b"\r"))
+                )
+                if is_unterminated_tail:
+                    # Kimi may be observed between two writes to the final JSONL row.
+                    # That is transient; a newline-terminated malformed row is not.
+                    raise BindingError("session_wire_not_ready") from exc
+                raise BindingError("session_wire_invalid") from exc
+            else:
+                line_count += 1
     return {
         "session_id": session_id,
         "cwd": str(config.managed_cwd),

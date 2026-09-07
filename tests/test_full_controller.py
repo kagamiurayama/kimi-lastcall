@@ -195,6 +195,50 @@ def test_binding_rejects_newline_terminated_malformed_wire_row(monkeypatch, tmp_
         binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
 
 
+def test_binding_accepts_lazy_missing_wire_for_fresh_session(monkeypatch, tmp_path):
+    # Kimi creates wire.jsonl only after SessionStart hooks return, so a
+    # fresh session legitimately has no wire inside the adoption window.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    wire = tmp_path / "sessions" / "wd_fixture" / OLD / "agents" / "main" / "wire.jsonl"
+    wire.unlink()
+    wire.parent.rmdir()
+    wire.parent.parent.rmdir()
+
+    result = binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+    assert result["wire_line_count"] == 0
+
+
+def test_binding_accepts_empty_wire_for_fresh_session(monkeypatch, tmp_path):
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    wire = tmp_path / "sessions" / "wd_fixture" / OLD / "agents" / "main" / "wire.jsonl"
+    wire.write_bytes(b"")
+
+    result = binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+    assert result["wire_line_count"] == 0
+
+
+def test_binding_rejects_symlinked_wire_ancestor_when_wire_missing(monkeypatch, tmp_path):
+    # Accepting a lazy wire must not let a symlinked agents/ ancestor redirect
+    # the future wire outside the session directory.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    wire = tmp_path / "sessions" / "wd_fixture" / OLD / "agents" / "main" / "wire.jsonl"
+    wire.unlink()
+    wire.parent.rmdir()
+    wire.parent.parent.rmdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    wire.parent.parent.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(binding.BindingError, match="session_wire_invalid"):
+        binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+
+
 def test_pending_marker_is_exclusive_and_cannot_be_retargeted(monkeypatch, tmp_path):
     private_root(monkeypatch, tmp_path)
     first = {
