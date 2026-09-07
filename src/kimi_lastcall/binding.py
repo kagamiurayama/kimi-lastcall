@@ -84,7 +84,7 @@ def validate_session_artifacts(
     line_count = 0
     try:
         wire_path.lstat()
-    except OSError:
+    except FileNotFoundError:
         # Kimi creates the wire lazily at session init, which can only happen
         # after SessionStart hooks return.  A missing wire is a legitimate
         # fresh-session state once state.json is fully validated; the session
@@ -94,6 +94,10 @@ def validate_session_artifacts(
         for ancestor in (wire_path.parent, wire_path.parent.parent):
             if ancestor.is_symlink() or (ancestor.exists() and not ancestor.is_dir()):
                 raise BindingError("session_wire_invalid")
+    except OSError as exc:
+        # Unreadable is not "not created yet": permission or I/O errors on an
+        # existing wire fail closed instead of binding a blind cursor.
+        raise BindingError("session_wire_invalid") from exc
     else:
         _regular_owner_file(wire_path)
         try:

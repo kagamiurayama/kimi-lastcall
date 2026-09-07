@@ -232,6 +232,8 @@ No shell is used. The callback receives only local environment bindings:
 
 Make the callback idempotent. A non-zero exit leaves the pending marker in place and keeps the operation fail-closed.
 
+Note on `KIMI_LASTCALL_WIRE_PATH`: Kimi creates `wire.jsonl` lazily at session init, so a fresh session may be adopted with the wire not yet written (the binding then records `wire_line_count_at_adoption: 0`). The callback must tolerate a not-yet-existing wire path and must never synchronously wait for it — the wire can only appear after the SessionStart hook returns, so blocking on it recreates the deadlock this project fixed in #5. Poll it later from your own loop instead.
+
 ## Security and failure semantics
 
 The two halves intentionally fail differently:

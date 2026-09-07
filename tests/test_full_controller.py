@@ -239,6 +239,51 @@ def test_binding_rejects_symlinked_wire_ancestor_when_wire_missing(monkeypatch, 
         binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
 
 
+def test_binding_rejects_unreadable_wire_ancestor(monkeypatch, tmp_path):
+    # An existing but unreadable wire ("permission denied") is not the same
+    # as a not-yet-created one: only FileNotFoundError may enter the lazy
+    # branch, anything else fails closed.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    agents = tmp_path / "sessions" / "wd_fixture" / OLD / "agents"
+    agents.chmod(0o000)
+    try:
+        with pytest.raises(binding.BindingError, match="session_wire_invalid"):
+            binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+    finally:
+        agents.chmod(0o755)
+
+
+def test_adoption_fails_closed_when_wire_unreadable(monkeypatch, tmp_path):
+    # Controller level: an unreadable wire must stop adoption before the
+    # binding is written, the callback runs, or the pending marker is
+    # consumed.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    prepare_bound(monkeypatch, tmp_path, cfg)
+    make_session(tmp_path, cfg, NEW)
+    pending = {
+        "schema": adoption.PENDING_SCHEMA,
+        "session_id": NEW,
+        "cwd": str(cfg.managed_cwd),
+        "tmux_socket": cfg.tmux_socket,
+        "tmux_session": cfg.tmux_session,
+        "tmux_pane": "%7",
+    }
+    secure.atomic_write_json(state.pending_path(), pending, exclusive=True)
+    agents = tmp_path / "sessions" / "wd_fixture" / NEW / "agents"
+    agents.chmod(0o000)
+    try:
+        ctl = controller.Controller(cfg, driver=FakeDriver(cfg))
+        with pytest.raises(controller.ControllerError, match="session_wire_invalid"):
+            ctl.adopt(pending)
+    finally:
+        agents.chmod(0o755)
+    assert state.pending_path().exists()
+    assert binding.load_binding()["session_id"] == OLD
+
+
 def test_pending_marker_is_exclusive_and_cannot_be_retargeted(monkeypatch, tmp_path):
     private_root(monkeypatch, tmp_path)
     first = {
