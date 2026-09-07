@@ -195,6 +195,102 @@ def test_binding_rejects_newline_terminated_malformed_wire_row(monkeypatch, tmp_
         binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
 
 
+def test_binding_accepts_lazy_missing_wire_for_fresh_session(monkeypatch, tmp_path):
+    # Kimi creates wire.jsonl only after SessionStart hooks return, so a
+    # fresh session legitimately has no wire inside the adoption window.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    wire = tmp_path / "sessions" / "wd_fixture" / OLD / "agents" / "main" / "wire.jsonl"
+    wire.unlink()
+    wire.parent.rmdir()
+    wire.parent.parent.rmdir()
+
+    result = binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+    assert result["wire_line_count"] == 0
+
+
+def test_binding_accepts_empty_wire_for_fresh_session(monkeypatch, tmp_path):
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    wire = tmp_path / "sessions" / "wd_fixture" / OLD / "agents" / "main" / "wire.jsonl"
+    wire.write_bytes(b"")
+
+    result = binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+    assert result["wire_line_count"] == 0
+
+
+def test_binding_rejects_symlinked_wire_ancestor_when_wire_missing(monkeypatch, tmp_path):
+    # Accepting a lazy wire must not let a symlinked agents/ ancestor redirect
+    # the future wire outside the session directory.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    wire = tmp_path / "sessions" / "wd_fixture" / OLD / "agents" / "main" / "wire.jsonl"
+    wire.unlink()
+    wire.parent.rmdir()
+    wire.parent.parent.rmdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    wire.parent.parent.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(binding.BindingError, match="session_wire_invalid"):
+        binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+
+
+def test_binding_rejects_unreadable_wire_ancestor(monkeypatch, tmp_path):
+    # An existing but unreadable wire ("permission denied") is not the same
+    # as a not-yet-created one: only FileNotFoundError may enter the lazy
+    # branch, anything else fails closed.
+    private_root(monkeypatch, tmp_path)
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    make_session(tmp_path, cfg, OLD)
+    agents = tmp_path / "sessions" / "wd_fixture" / OLD / "agents"
+    agents.chmod(0o000)
+    try:
+        with pytest.raises(binding.BindingError, match="session_wire_invalid"):
+            binding.validate_session_artifacts(cfg, OLD, str(cfg.managed_cwd))
+    finally:
+        agents.chmod(0o755)
+
+
+def test_adoption_fails_closed_when_wire_unreadable(monkeypatch, tmp_path):
+    # Controller level: an unreadable wire must stop adoption before the
+    # binding is written, the callback runs, or the pending marker is
+    # consumed.
+    private_root(monkeypatch, tmp_path)
+    callback_log = tmp_path / "callback-called.txt"
+    callback = executable(
+        tmp_path / "record-callback",
+        "#!/bin/sh\necho called >> \"$CALLBACK_LOG\"\n",
+    )
+    monkeypatch.setenv("CALLBACK_LOG", str(callback_log))
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"), callback=[str(callback)])
+    prepare_bound(monkeypatch, tmp_path, cfg)
+    make_session(tmp_path, cfg, NEW)
+    pending = {
+        "schema": adoption.PENDING_SCHEMA,
+        "session_id": NEW,
+        "cwd": str(cfg.managed_cwd),
+        "tmux_socket": cfg.tmux_socket,
+        "tmux_session": cfg.tmux_session,
+        "tmux_pane": "%7",
+    }
+    secure.atomic_write_json(state.pending_path(), pending, exclusive=True)
+    agents = tmp_path / "sessions" / "wd_fixture" / NEW / "agents"
+    agents.chmod(0o000)
+    try:
+        ctl = controller.Controller(cfg, driver=FakeDriver(cfg))
+        with pytest.raises(controller.ControllerError, match="session_wire_invalid"):
+            ctl.adopt(pending)
+    finally:
+        agents.chmod(0o755)
+    assert state.pending_path().exists()
+    assert binding.load_binding()["session_id"] == OLD
+    assert not callback_log.exists()
+
+
 def test_pending_marker_is_exclusive_and_cannot_be_retargeted(monkeypatch, tmp_path):
     private_root(monkeypatch, tmp_path)
     first = {
