@@ -260,7 +260,13 @@ def test_adoption_fails_closed_when_wire_unreadable(monkeypatch, tmp_path):
     # binding is written, the callback runs, or the pending marker is
     # consumed.
     private_root(monkeypatch, tmp_path)
-    cfg = make_config(tmp_path, executable(tmp_path / "tmux"))
+    callback_log = tmp_path / "callback-called.txt"
+    callback = executable(
+        tmp_path / "record-callback",
+        "#!/bin/sh\necho called >> \"$CALLBACK_LOG\"\n",
+    )
+    monkeypatch.setenv("CALLBACK_LOG", str(callback_log))
+    cfg = make_config(tmp_path, executable(tmp_path / "tmux"), callback=[str(callback)])
     prepare_bound(monkeypatch, tmp_path, cfg)
     make_session(tmp_path, cfg, NEW)
     pending = {
@@ -282,6 +288,7 @@ def test_adoption_fails_closed_when_wire_unreadable(monkeypatch, tmp_path):
         agents.chmod(0o755)
     assert state.pending_path().exists()
     assert binding.load_binding()["session_id"] == OLD
+    assert not callback_log.exists()
 
 
 def test_pending_marker_is_exclusive_and_cannot_be_retargeted(monkeypatch, tmp_path):

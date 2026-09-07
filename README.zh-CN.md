@@ -232,6 +232,8 @@ kimi-lastcall configure \
 
 回调必须可幂等重放。非零退出会保留 pending 标记，使整次接管继续故障关闭。
 
+关于 `KIMI_LASTCALL_WIRE_PATH`：Kimi 在会话初始化时才懒建 `wire.jsonl`，所以新会话被认养时 wire 可能尚未写入（此时绑定记录 `wire_line_count_at_adoption: 0`）。回调必须容忍 wire 路径尚不存在，并且**不得同步等待它出现**——wire 要等 SessionStart 挂钩返回后才会出生，同步等待会重新制造 #5 修复的那个死锁。需要等 wire 的接线，请在你自己的循环里轮询。
+
 ## 安全边界与故障语义
 
 两半故意采用不同的故障方向：
